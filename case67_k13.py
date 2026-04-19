@@ -6,6 +6,7 @@ import re
 import time
 from datetime import datetime
 import tempfile
+import io  # 新增：用於產生記憶體中的 Excel 檔案供下載
 
 # ======================
 # 基本設定
@@ -19,7 +20,6 @@ st.title("case66｜T1_1｜PDF逐列文字 → df(page, text)")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f]")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-OUT_DIR = os.path.join(SCRIPT_DIR, "out")
 SCRIPT_STEM = os.path.splitext(os.path.basename(__file__))[0]
 
 # ======================
@@ -137,15 +137,13 @@ def pdf_to_text_rows(pdf_path, pages_str):
 
     return df, logs, elapsed
 
-def export_to_xlsx(df, out_name):
-    os.makedirs(OUT_DIR, exist_ok=True)
-    out_path = os.path.join(OUT_DIR, out_name)
-
+# 新增：將 DataFrame 轉為 Excel 格式的二進位資料（網頁下載專用）
+def to_excel_bytes(df):
+    output = io.BytesIO()
     df_export = clean_df_for_excel(df.copy())
-    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_export.to_excel(writer, index=False, sheet_name="text_rows")
-
-    return out_path
+    return output.getvalue()
 
 # ======================
 # Session State
@@ -163,7 +161,7 @@ if "result_file_name" not in st.session_state:
     st.session_state.result_file_name = ""
 
 # ======================
-# 側邊欄 (只留設定，不放按鈕)
+# 側邊欄
 # ======================
 st.sidebar.header("參數設定")
 
@@ -178,15 +176,33 @@ output_name = st.sidebar.text_input("匯出檔名", value=default_name)
 # ======================
 st.markdown("### ⚙️ 執行控制")
 col1, col2 = st.columns(2)
+
 with col1:
     run_btn = st.button("🚀 執行轉換", type="primary", use_container_width=True)
+
 with col2:
-    export_btn = st.button("💾 匯出到 out", use_container_width=True)
+    # 判斷如果有運算結果，才顯示真正的下載按鈕
+    if st.session_state.result_df is not None:
+        excel_data = to_excel_bytes(st.session_state.result_df)
+        dl_name = output_name.strip() if output_name.strip() else default_name
+        if not dl_name.lower().endswith(".xlsx"):
+            dl_name += ".xlsx"
+            
+        st.download_button(
+            label="📥 下載 Excel 檔案到電腦",
+            data=excel_data,
+            file_name=dl_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+    else:
+        # 如果還沒運算，顯示一個不可點擊的灰色按鈕作為提示
+        st.button("📥 請先執行轉換再下載", disabled=True, use_container_width=True)
 
 st.markdown("---")
 
 # ======================
-# 執行
+# 執行轉換邏輯
 # ======================
 if run_btn:
     if uploaded_file is None:
@@ -203,30 +219,12 @@ if run_btn:
             st.session_state.result_logs = logs
             st.session_state.result_elapsed = elapsed
             st.session_state.result_file_name = output_name.strip() or default_name
+            st.rerun() # 重新載入畫面以顯示下載按鈕
         finally:
             try:
                 os.remove(temp_pdf_path)
             except Exception:
                 pass
-
-# ======================
-# 匯出 (移到顯示結果前面，邏輯更順)
-# ======================
-if export_btn:
-    df_export = st.session_state.result_df
-
-    if df_export is None or df_export.empty:
-        st.error("目前沒有可匯出的結果，請先上傳檔案並按『🚀 執行轉換』。")
-    else:
-        try:
-            file_name = st.session_state.result_file_name.strip()
-            if not file_name.lower().endswith(".xlsx"):
-                file_name += ".xlsx"
-
-            out_path = export_to_xlsx(df_export, file_name)
-            st.success(f"匯出成功：檔案已儲存至 `{out_path}`")
-        except Exception as e:
-            st.error(f"匯出失敗：{e}")
 
 # ======================
 # 顯示結果
@@ -238,7 +236,7 @@ if st.session_state.result_logs:
 df_show = st.session_state.result_df
 
 if df_show is not None:
-    st.success(f"✅ 轉換完成！共找到 {df_show.shape[0]} 列文字，用時 {st.session_state.result_elapsed:.2f} 秒。")
+    st.success(f"✅ 轉換完成！共找到 {df_show.shape[0]} 列文字，用時 {st.session_state.result_elapsed:.2f} 秒。現在可以點擊上方按鈕下載檔案！")
     st.subheader("📊 結果預覽（text_rows）")
     st.dataframe(df_show, use_container_width=True)
 else:
