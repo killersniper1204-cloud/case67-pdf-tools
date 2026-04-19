@@ -163,7 +163,7 @@ if "result_file_name" not in st.session_state:
     st.session_state.result_file_name = ""
 
 # ======================
-# 側邊欄
+# 側邊欄 (只留設定，不放按鈕)
 # ======================
 st.sidebar.header("參數設定")
 
@@ -171,4 +171,75 @@ uploaded_file = st.sidebar.file_uploader("上傳 PDF", type=["pdf"])
 pages_str = st.sidebar.text_input("頁碼（預設 all）", value="all")
 
 default_name = f"{SCRIPT_STEM}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-output_name = st
+output_name = st.sidebar.text_input("匯出檔名", value=default_name)
+
+# ======================
+# 主畫面大按鈕區塊
+# ======================
+st.markdown("### ⚙️ 執行控制")
+col1, col2 = st.columns(2)
+with col1:
+    run_btn = st.button("🚀 執行轉換", type="primary", use_container_width=True)
+with col2:
+    export_btn = st.button("💾 匯出到 out", use_container_width=True)
+
+st.markdown("---")
+
+# ======================
+# 執行
+# ======================
+if run_btn:
+    if uploaded_file is None:
+        st.error("請先在左側上傳 PDF")
+    else:
+        suffix = os.path.splitext(uploaded_file.name)[1] or ".pdf"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(uploaded_file.read())
+            temp_pdf_path = tmp.name
+
+        try:
+            df, logs, elapsed = pdf_to_text_rows(temp_pdf_path, pages_str)
+            st.session_state.result_df = df
+            st.session_state.result_logs = logs
+            st.session_state.result_elapsed = elapsed
+            st.session_state.result_file_name = output_name.strip() or default_name
+        finally:
+            try:
+                os.remove(temp_pdf_path)
+            except Exception:
+                pass
+
+# ======================
+# 匯出 (移到顯示結果前面，邏輯更順)
+# ======================
+if export_btn:
+    df_export = st.session_state.result_df
+
+    if df_export is None or df_export.empty:
+        st.error("目前沒有可匯出的結果，請先上傳檔案並按『🚀 執行轉換』。")
+    else:
+        try:
+            file_name = st.session_state.result_file_name.strip()
+            if not file_name.lower().endswith(".xlsx"):
+                file_name += ".xlsx"
+
+            out_path = export_to_xlsx(df_export, file_name)
+            st.success(f"匯出成功：檔案已儲存至 `{out_path}`")
+        except Exception as e:
+            st.error(f"匯出失敗：{e}")
+
+# ======================
+# 顯示結果
+# ======================
+if st.session_state.result_logs:
+    with st.expander("展開查看執行 Log"):
+        st.text("\n".join(st.session_state.result_logs))
+
+df_show = st.session_state.result_df
+
+if df_show is not None:
+    st.success(f"✅ 轉換完成！共找到 {df_show.shape[0]} 列文字，用時 {st.session_state.result_elapsed:.2f} 秒。")
+    st.subheader("📊 結果預覽（text_rows）")
+    st.dataframe(df_show, use_container_width=True)
+else:
+    st.info("💡 請先在左側上傳 PDF，然後點擊上方的『🚀 執行轉換』。")
